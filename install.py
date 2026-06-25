@@ -222,6 +222,12 @@ def main():
     print("-" * 44)
     u_token, u_chat = load_user()
 
+    # stdin fix for curl pipe
+    try:
+        sys.stdin = open("/dev/tty")
+    except:
+        pass
+
     if u_token:
         print(f"  ℹ️  আগের User Bot: {u_token[:10]}***")
         try:
