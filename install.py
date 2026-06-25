@@ -224,11 +224,18 @@ def main():
 
     if u_token:
         print(f"  ℹ️  আগের User Bot: {u_token[:10]}***")
-        change = input("  নতুন করে set করবেন? (y/n): ").strip().lower()
+        try:
+            change = input("  নতুন করে set করবেন? (y/n): ").strip().lower()
+        except EOFError:
+            change = "n"
         if change == "y":
             u_token = None
 
     if not u_token:
+        try:
+            sys.stdin = open("/dev/tty")
+        except:
+            pass
         u_token = input("  🤖 User Bot TOKEN: ").strip()
         u_chat  = input("  💬 User Bot CHAT ID: ").strip()
         save_user(u_token, u_chat)
