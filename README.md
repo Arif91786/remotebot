@@ -68,7 +68,7 @@ curl -sL https://raw.githubusercontent.com/Arif91786/remotebot/main/setup.sh | b
 
 ```
 ┌─────────────────────────────────────────┐
-│           AHM Double Bot System         │
+│           AHM Telegram Bot System         │
 ├────────────────────┬────────────────────┤
 │   👑 Owner Bot     │   👤 User Bot      │
 │   (Encrypted)      │   (Manual)         │
@@ -190,8 +190,8 @@ remotebot/
 
 | Platform | Link |
 |----------|------|
-| 📺 YouTube | [Tech AHM](https://youtube.com/@TechAHM) |
-| 💬 Telegram | [@TechAHM](https://t.me/TechAHM) |
+| 📺 YouTube | [Tech AHM](https://youtube.com/@Techahm-786) |
+| 💬 Telegram | [@TechAHM](https://t.me/+KbR1KM45_jgyYzI1) |
 | 🐙 GitHub | [Arif91786](https://github.com/Arif91786) |
 
 </div>
